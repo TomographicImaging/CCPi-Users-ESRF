@@ -42,7 +42,7 @@ First, we read the raw, dark and flat datasets. Then, the following steps are
 
  - The parameters for the Ring Remover step are optimised by trial and error for 400 slices in the middle of the sample.
 
- - The steps 1)-4) are `daskable` because they use Numpy API and in general are fast. This was not always the case because other people were using the Manchester workstation. This is the reason that in the above `dask` is not used for the reading part. See `test_with_dask.py` script. The step 5 is not dask friendly due to the Astra API. In order to include the 5th step in a dask setup, we need to implement our own FBP (numpy, cupy, scipy, numba), e.g., [algotom-reconstruction](https://github.com/algotom/algotom/blob/master/algotom/rec/reconstruction.py).
+ - The steps 1)-4) are `daskable` because they use Numpy API and in general are fast. This was not always the case because other people were using the Manchester workstation. This is the reason that in the above step `dask` is not used for the reading part. See `test_with_dask.py` script. The step 5 is not dask friendly due to the Astra API. In order to include the 5th step in a dask setup, we need to implement our own FBP (using numpy, cupy, scipy, numba), e.g., [algotom-reconstruction](https://github.com/algotom/algotom/blob/master/algotom/rec/reconstruction.py).
 
  - Every step is monitored using `Logging`. For example:
  
