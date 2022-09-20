@@ -1,5 +1,5 @@
 
-Reconstruction of ESRF data: Suleyman Karabal (UoM), Supervisor: Phil Withers (UoM).
+# Reconstruction of ESRF data: Suleyman Karabal (UoM), Supervisor: Phil Withers (UoM).
 
 ## Project
 
@@ -7,7 +7,7 @@ The purpose of the experiment is to understand ductile fracture micromechanisms 
 
 ## Dataset
 
-In total there are 77 tomograms and the following were preprocessed and reconstructed
+In total there are 77 tomograms and the following were preprocessed and reconstructed:
 
 1-3: no  
 4-19 : yes 
