@@ -105,7 +105,6 @@ def algo_isotropic_TV(data_slice, alpha, initial=None):
     ag = data_slice.geometry
     ig = ag.get_ImageGeometry()
 
-
     F = BlockFunction(alpha * MixedL21Norm(),
         0.5*L2NormSquared(b=data_slice))
 
@@ -136,8 +135,7 @@ i=0
 for alpha in alphas:
     myPDHG = algo_isotropic_TV(data_slice, alpha=alpha, initial=None)
     reco = myPDHG.solution
-    reco.apply_circular_mask(0.5)
-
+    
     writer = NEXUSDataWriter()
     writer.set_up(data=reco,
             file_name='reco_alpha_x_loop_'+str(i)+'.nxs')
