@@ -10,7 +10,7 @@ import hdf5plugin
 from cil.framework import AcquisitionGeometry, AcquisitionData
 import matplotlib.pyplot as plt
 from tomopy.prep.phase import retrieve_phase
-from cil.optimisation.functions import L2NormSquared, BlockFunction, L1Norm, ZeroFunction, MixedL21Norm
+from cil.optimisation.functions import L2NormSquared, BlockFunction, L1Norm, ZeroFunction, MixedL21Norm, TotalVariation
 from cil.optimisation.algorithms import PDHG
 from cil.optimisation.operators import BlockOperator, FiniteDifferenceOperator, GradientOperator
 from cil.plugins.astra.operators import ProjectionOperator
@@ -125,23 +125,48 @@ def algo_isotropic_TV(data_slice, alpha, initial=None):
                 max_iteration=2000, 
                 update_objective_interval = 10,
                 )
-
-    myPDHG.run(500,verbose=2)
     
     return myPDHG
 
-alphas = [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05]
-i=0
-for alpha in alphas:
-    myPDHG = algo_isotropic_TV(data_slice, alpha=alpha, initial=None)
-    reco = myPDHG.solution
+def algo_isotropic_TV_implicit(data_slice, alpha, initial=None):
+
+    ag = data_slice.geometry
+    ig = ag.get_ImageGeometry()
+
+    F = 0.5 * L2NormSquared(b=data_slice)
     
+    G = (alpha/ig.voxel_size_y) *TotalVariation(max_iteration=10)
+    
+    K = ProjectionOperator(ig, ag, device='gpu')
+
+    normK = K.norm()
+    sigma = 0.5
+    tau = 1./(sigma*normK**2)
+
+    myPDHG = PDHG(f=F, 
+                g=G, 
+                operator=K, 
+                sigma = sigma, tau = tau,
+                initial = initial,
+                max_iteration=2000, 
+                update_objective_interval = 10,
+                )
+
+    return myPDHG
+
+alphas = [0.1, 0.5, 0.75, 1, 1.25, 1.5, 5]
+i=0
+for i in np.arange(len(alphas)):
+    myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], initial=None)
+    myPDHG.run(1000,verbose=2)
+    reco = myPDHG.solution
+
     writer = NEXUSDataWriter()
     writer.set_up(data=reco,
-            file_name='reco_alpha_x_loop_'+str(i)+'.nxs')
+            file_name='reco_alpha_loop_'+str(i)+'.nxs')
     writer.write()
 
-    np.save('obj_alpha_x_loop_'+str(i)+'.npy', myPDHG.objective)
+    np.save('obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
 
     i=i+1
 
