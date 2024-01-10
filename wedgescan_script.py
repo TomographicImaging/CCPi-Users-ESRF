@@ -79,13 +79,16 @@ for i in np.arange(data.shape[0]):
     data.array[i,:,:] = data.array[i,:,:] / poly1d_fn(x)
 data.array[:,:,:] = mean_intensity*data.array[:,:,:]/np.mean(data.array[:,:,:])
 
+temp = retrieve_phase(data.array, alpha=0.01)
+data = AcquisitionData(temp, deep_copy=False, geometry = data.geometry)
+
 # take a single slice
 vertical = 400
 data_slice = data.get_slice(vertical=vertical)
 show2D(data_slice)
 ig = data_slice.geometry.get_ImageGeometry()
 
-padsize = 50
+padsize = 3000
 data_slice = Padder.linear_ramp( padsize, 0)(data_slice)
 
 r = RingRemover(8,'db20', 1.5)
@@ -93,12 +96,6 @@ r.set_input(data_slice)
 data_slice = r.get_output()
 
 data_slice.geometry.set_centre_of_rotation(16.5, distance_units='pixels')
-
-temp = data_slice.array.reshape(data_slice.shape + (1,))
-alpha = 0.005
-temp = retrieve_phase(temp, pixel_size=6.5e-4, dist=30, energy=19,  alpha=alpha)
-temp = temp.squeeze()
-data_slice = AcquisitionData(temp, deep_copy=False, geometry = data_slice.geometry)
 
 def algo_isotropic_TV(data_slice, alpha, initial=None):
 
@@ -128,7 +125,7 @@ def algo_isotropic_TV(data_slice, alpha, initial=None):
     
     return myPDHG
 
-def algo_isotropic_TV_implicit(data_slice, alpha, initial=None):
+def algo_isotropic_TV_implicit(data_slice, alpha, sigma=0.5, initial=None):
 
     ag = data_slice.geometry
     ig = ag.get_ImageGeometry()
@@ -140,7 +137,6 @@ def algo_isotropic_TV_implicit(data_slice, alpha, initial=None):
     K = ProjectionOperator(ig, ag, device='gpu')
 
     normK = K.norm()
-    sigma = 0.5
     tau = 1./(sigma*normK**2)
 
     myPDHG = PDHG(f=F, 
@@ -149,24 +145,54 @@ def algo_isotropic_TV_implicit(data_slice, alpha, initial=None):
                 sigma = sigma, tau = tau,
                 initial = initial,
                 max_iteration=2000, 
-                update_objective_interval = 10,
+                update_objective_interval = 50,
                 )
 
     return myPDHG
 
-alphas = [0.1, 0.5, 0.75, 1, 1.25, 1.5, 5]
-i=0
+alphas = [0.01, 0.05, 0.1, 0.5, 1, 5]
+
 for i in np.arange(len(alphas)):
-    myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], initial=None)
-    myPDHG.run(1000,verbose=2)
+    myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.5, initial=None)
+    myPDHG.run(300,verbose=2)
     reco = myPDHG.solution
+
+    reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
 
     writer = NEXUSDataWriter()
     writer.set_up(data=reco,
-            file_name='reco_alpha_loop_'+str(i)+'.nxs')
+            file_name='sigma05_reco_alpha_loop_'+str(i)+'.nxs')
     writer.write()
 
-    np.save('obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
+    np.save('sigma05_obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
 
-    i=i+1
+#### repeat for alpha = 0.1, sigma = 0.1
+alpha = 0.1
 
+myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.1, initial=None)
+myPDHG.run(300,verbose=2)
+reco = myPDHG.solution
+
+reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+writer = NEXUSDataWriter()
+writer.set_up(data=reco,
+        file_name='sigma01_reco_alpha_01.nxs')
+writer.write()
+
+np.save('sigma01_obj_alpha_01.npy', myPDHG.objective)
+
+
+#### repeat for alpha = 0.1, sigma = 1
+myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=1.0, initial=None)
+myPDHG.run(300,verbose=2)
+reco = myPDHG.solution
+
+reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+writer = NEXUSDataWriter()
+writer.set_up(data=reco,
+        file_name='sigma1_reco_alpha_01.nxs')
+writer.write()
+
+np.save('sigma1_obj_alpha_01.npy', myPDHG.objective)
