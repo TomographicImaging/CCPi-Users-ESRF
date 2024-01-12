@@ -15,21 +15,21 @@ from cil.optimisation.algorithms import PDHG
 from cil.optimisation.operators import BlockOperator, FiniteDifferenceOperator, GradientOperator
 from cil.plugins.astra.operators import ProjectionOperator
 
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/InSitu-LPSCL-20Ton-30Min_0001.h5'#
+filename = '/data/ESRF/Wedgescan_Iterative_ASSB/InSitu-LPSCL-20Ton-30Min_0001.h5'
 angles = HDF5_utilities.read(filename, '/4.1/measurement/hrsrot')
 ds_metadata = HDF5_utilities.get_dataset_metadata(filename, '4.1/instrument/pco2linux/data')
 
 roi = [slice(None), slice(450, 950), slice(None)]
 source_sel=tuple(roi)
 
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/flats.h5'#
+filename = '/data/ESRF/Wedgescan_Iterative_ASSB/flats.h5'
 HDF5_utilities.print_metadata(filename, '/entry_0000/measurement', 2)
 HDF5_utilities.get_dataset_metadata(filename, 'entry_0000/measurement/data')
 flats = HDF5_utilities.read(filename, 'entry_0000/measurement/data', tuple(source_sel))
 flat = np.mean(flats, axis = 0) #median?
 
 
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/darks.h5'#
+filename = '/data/ESRF/Wedgescan_Iterative_ASSB/darks.h5'
 HDF5_utilities.print_metadata(filename, 'entry_0000/measurement', 2)
 HDF5_utilities.get_dataset_metadata(filename, 'entry_0000/measurement/data')
 darks = HDF5_utilities.read(filename, 'entry_0000/measurement/data', tuple(source_sel))
@@ -41,8 +41,7 @@ for i in projections:
     filename = '/data/ESRF/Wedgescan_Iterative_ASSB/pco2linux_{0:04}.h5'.format(i)
     print(filename)
     ds_arr = HDF5_utilities.read_to(filename, 'entry_0000/measurement/data',data,source_sel, np.s_[i*200:i*200+200,:,:])
-    # ds_arr[ds_arr>1000] = np.mean(ds_arr) ### this isn't right - how should I be doing this?
-    #data[i*200:i*200+200] = ds_arr
+
 flat = flat - dark
 data = (data - dark)/ flat
 
@@ -145,54 +144,69 @@ def algo_isotropic_TV_implicit(data_slice, alpha, sigma=0.5, initial=None):
                 sigma = sigma, tau = tau,
                 initial = initial,
                 max_iteration=2000, 
-                update_objective_interval = 50,
+                update_objective_interval = 10,
                 )
 
     return myPDHG
 
-alphas = [0.01, 0.05, 0.1, 0.5, 1, 5]
+def algo_anisotropic_TV(data_slice, alpha, alpha_dx, sigma=0.5, initial=None):
 
-for i in np.arange(len(alphas)):
-    myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.5, initial=None)
-    myPDHG.run(300,verbose=2)
-    reco = myPDHG.solution
+    ag = data_slice.geometry
+    ig = ag.get_ImageGeometry()
 
-    reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+    F = BlockFunction(0.5*L2NormSquared(b=data_slice),
+                          alpha*MixedL21Norm(), 
+                          alpha_dx*L1Norm())
 
-    writer = NEXUSDataWriter()
-    writer.set_up(data=reco,
-            file_name='sigma05_reco_alpha_loop_'+str(i)+'.nxs')
-    writer.write()
+    K = BlockOperator(ProjectionOperator(ig, ag), 
+                         GradientOperator(ig), 
+                         FiniteDifferenceOperator(ig, direction='horizontal_x'))
 
-    np.save('sigma05_obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
+    G = ZeroFunction()
 
-#### repeat for alpha = 0.1, sigma = 0.1
-alpha = 0.1
+    normK = K.norm()
+    tau = 1./(sigma*normK**2)
 
-myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.1, initial=None)
-myPDHG.run(300,verbose=2)
+    myPDHG = PDHG(f=F, 
+                g=G, 
+                operator=K, 
+                sigma = sigma, tau = tau,
+                initial = initial,
+                max_iteration=2000, 
+                update_objective_interval = 10,
+                )
+
+    return myPDHG
+
+# alphas = [0.01, 0.05, 0.1, 0.5, 1, 5]
+
+# for i in np.arange(len(alphas)):
+#     myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.5, initial=None)
+#     myPDHG.run(300,verbose=2)
+#     reco = myPDHG.solution
+
+#     reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+#     writer = NEXUSDataWriter()
+#     writer.set_up(data=reco,
+#             file_name='sigma05_reco_alpha_loop_'+str(i)+'.nxs')
+#     writer.write()
+
+#     np.save('sigma05_obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
+
+
+alpha = 0.05
+sigma = 0.1
+
+myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alpha, sigma=sigma, initial=None)
+myPDHG.run(1000,verbose=2)
 reco = myPDHG.solution
 
 reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
 
 writer = NEXUSDataWriter()
 writer.set_up(data=reco,
-        file_name='sigma01_reco_alpha_01.nxs')
+        file_name='long_sigma01_reco_alpha01.nxs')
 writer.write()
 
-np.save('sigma01_obj_alpha_01.npy', myPDHG.objective)
-
-
-#### repeat for alpha = 0.1, sigma = 1
-myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=1.0, initial=None)
-myPDHG.run(300,verbose=2)
-reco = myPDHG.solution
-
-reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
-
-writer = NEXUSDataWriter()
-writer.set_up(data=reco,
-        file_name='sigma1_reco_alpha_01.nxs')
-writer.write()
-
-np.save('sigma1_obj_alpha_01.npy', myPDHG.objective)
+np.save('long_sigma01_obj_alpha01.npy', myPDHG.objective)
