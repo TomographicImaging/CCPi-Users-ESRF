@@ -198,9 +198,22 @@ class ESRF_ID15_DataReader(object):
         return self._number_of_datasets
 
 
-    def __init__(self, filename):
+    def __init__(self, filename, projection_filename=None, dark_filename=None, flat_filename=None):
 
         self.filename = filename
+        if projection_filename is None:
+            self.projection_filename = filename
+        else:
+            self.projection_filename = projection_filename
+        if dark_filename is None:
+            self.dark_filename = filename
+        else:
+            self.dark_filename = dark_filename
+        if flat_filename is None:
+            self.flat_filename = filename
+        else:
+            self.flat_filename = flat_filename
+
         self._get_number_of_datasets()
         self._ag_full = None
         self._roi = [slice(None), slice(None), slice(None)]
@@ -239,20 +252,23 @@ class ESRF_ID15_DataReader(object):
     def get_flatfield_images(self, dataset_id=1):
 
 
-        return HDF5_utilities.read(self.filename, self._get_dataset_number(dataset_id,1)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
+        return HDF5_utilities.read(self.flat_filename, self._get_dataset_number(dataset_id,1)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
         
 
     def get_darkfield_images(self, dataset_id=1):
 
-        return HDF5_utilities.read(self.filename, self._get_dataset_number(dataset_id,2)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
+        return HDF5_utilities.read(self.dark_filename, self._get_dataset_number(dataset_id,2)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
 
 
     def get_geometry(self, dataset_id=None):
 
         if dataset_id is not None:
-            data_shape = HDF5_utilities.get_dataset_metadata(self.filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/pcoedgehs')[1]
-            angles = HDF5_utilities.read(self.filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/hrrz_center')
-            
+            try:
+                data_shape = HDF5_utilities.get_dataset_metadata(self.filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/pcoedgehs')[1]
+                angles = HDF5_utilities.read(self.filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/hrrz_center')
+            except:
+                data_shape = HDF5_utilities.get_dataset_metadata(self.projection_filename, 'entry_0000/instrument/pco2linux/data')[1]
+                angles = data_shape[0]
             ag = AcquisitionGeometry.create_Parallel3D().set_panel([data_shape[2],data_shape[1]]).set_angles(angles)
 
         else:
@@ -277,8 +293,10 @@ class ESRF_ID15_DataReader(object):
         ag = self.get_geometry(dataset_id=dataset_id)
 
         if dataset_id is not None:
-
-            data =  HDF5_utilities.read(self.filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
+            try:
+                data =  HDF5_utilities.read(self.projection_filename, self._get_dataset_number(dataset_id,0)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
+            except:
+                data =  HDF5_utilities.read(self.projection_filename, 'entry_0000/measurement/data/', source_sel=tuple(self._roi))
 
             if normalise == True:
                 flat = np.mean(self.get_flatfield_images(dataset_id), axis=0)
@@ -298,8 +316,10 @@ class ESRF_ID15_DataReader(object):
 
                 dark = np.mean(self.get_darkfield_images(i+1), axis=0)
                 flat = np.mean(self.get_flatfield_images(i+1), axis=0)
-                data = HDF5_utilities.read(self.filename, self._get_dataset_number(i+1,0)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
-
+                try:
+                    data = HDF5_utilities.read(self.filename, self._get_dataset_number(i+1,0)+'.1/measurement/pcoedgehs/', source_sel=tuple(self._roi))
+                except:
+                    data = HDF5_utilities.read(self.filename, self._get_dataset_number(i+1,0)+'.1/measurement/pco2linux/', source_sel=tuple(self._roi))
                 flat = flat - dark
                 data = ((data - dark)/ flat).squeeze()
                 length = data.shape[0]
