@@ -195,7 +195,26 @@ def algo_anisotropic_TV(data_slice, alpha, alpha_dx, sigma=0.5, initial=None):
 #     np.save('sigma05_obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
 
 
+## 
 alpha = 0.05
+alpha_dx = 0.01
+sigma = 0.1
+
+myPDHG = algo_anisotropic_TV(data_slice, alpha=alpha, alpha_dx=alpha_dx, sigma=sigma, initial=None)
+myPDHG.run(1000,verbose=2)
+reco = myPDHG.solution
+
+reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+writer = NEXUSDataWriter()
+writer.set_up(data=reco,
+        file_name='aniso_reco_alpha005_alphadx001_sigma01.nxs')
+writer.write()
+
+np.save('aniso_obj_alpha005_alphadx001_sigma01.npy', myPDHG.objective)
+
+#### long iso TV
+alpha = 0.1
 sigma = 0.1
 
 myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alpha, sigma=sigma, initial=None)
