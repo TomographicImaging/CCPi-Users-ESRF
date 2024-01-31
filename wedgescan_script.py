@@ -14,87 +14,64 @@ from cil.optimisation.functions import L2NormSquared, BlockFunction, L1Norm, Zer
 from cil.optimisation.algorithms import PDHG
 from cil.optimisation.operators import BlockOperator, FiniteDifferenceOperator, GradientOperator
 from cil.plugins.astra.operators import ProjectionOperator
-
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/InSitu-LPSCL-20Ton-30Min_0001.h5'
-angles = HDF5_utilities.read(filename, '/4.1/measurement/hrsrot')
-ds_metadata = HDF5_utilities.get_dataset_metadata(filename, '4.1/instrument/pco2linux/data')
-
-roi = [slice(None), slice(450, 950), slice(None)]
-source_sel=tuple(roi)
-
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/flats.h5'
-HDF5_utilities.print_metadata(filename, '/entry_0000/measurement', 2)
-HDF5_utilities.get_dataset_metadata(filename, 'entry_0000/measurement/data')
-flats = HDF5_utilities.read(filename, 'entry_0000/measurement/data', tuple(source_sel))
-flat = np.mean(flats, axis = 0) #median?
+from wedgescan_functions import get_slice_processed
 
 
-filename = '/data/ESRF/Wedgescan_Iterative_ASSB/darks.h5'
-HDF5_utilities.print_metadata(filename, 'entry_0000/measurement', 2)
-HDF5_utilities.get_dataset_metadata(filename, 'entry_0000/measurement/data')
-darks = HDF5_utilities.read(filename, 'entry_0000/measurement/data', tuple(source_sel))
-dark = np.mean(darks, axis = 0) 
 
-projections = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-data = np.empty((3000, roi[1].stop-roi[1].start, ds_metadata['shape'][2]), dtype=np.float32)
-for i in projections:
-    filename = '/data/ESRF/Wedgescan_Iterative_ASSB/pco2linux_{0:04}.h5'.format(i)
-    print(filename)
-    ds_arr = HDF5_utilities.read_to(filename, 'entry_0000/measurement/data',data,source_sel, np.s_[i*200:i*200+200,:,:])
 
-flat = flat - dark
-data = (data - dark)/ flat
-
-ag = AcquisitionGeometry.create_Parallel3D().set_panel([np.shape(data)[2],np.shape(data)[1]]).set_angles(angles)
-data = AcquisitionData(data, deep_copy=False, geometry = ag)
-
-data = Slicer(roi={'angle': (300, 2710, 1)})(data)
-
-processor = TransmissionAbsorptionConverter()
-processor.set_input(data)
-processor.get_output(out=data)
-show2D(data)
-
-# Normalise the gradient
-gradient = 0
-offset = 0
-mean_intensity = 0
-for i in np.arange(data.shape[0]):
-    y = data.array[i,int(data.shape[1]/2),:]
-    x = np.arange(len(y))
-    coef = np.polyfit(x,y,1)
-    gradient += coef[0]
-    offset += coef[1]
-    mean_intensity += np.mean(data.array[i,:,:])
-    poly1d_fn = np.poly1d(coef)
-
-gradient = gradient/data.shape[0]
-offset = offset/data.shape[0]
-mean_intensity = mean_intensity/data.shape[0]
-poly1d_fn = np.poly1d([gradient, offset])
-
-for i in np.arange(data.shape[0]):
-    proj_index = i
-    data.array[i,:,:] = data.array[i,:,:] / poly1d_fn(x)
-data.array[:,:,:] = mean_intensity*data.array[:,:,:]/np.mean(data.array[:,:,:])
-
-temp = retrieve_phase(data.array, alpha=0.01)
-data = AcquisitionData(temp, deep_copy=False, geometry = data.geometry)
 
 # take a single slice
 vertical = 400
-data_slice = data.get_slice(vertical=vertical)
-show2D(data_slice)
-ig = data_slice.geometry.get_ImageGeometry()
+data_slice = get_slice_processed(vertical)
+
+data = data_slice.copy()
+# process data
+ig = data.geometry.get_ImageGeometry()
+r = RingRemover(8,'db20', 1.5)
+r.set_input(data)
+data = r.get_output()
+data.geometry.set_centre_of_rotation(16.5, distance_units='pixels')
+
+start_array = np.zeros(data.shape[1])
+end_array = np.zeros(data.shape[1])
+x = np.arange(data.shape[1])
+for i in x:
+
+    index = np.where(abs(np.diff(data.array[:,i])) > 0.75)[0]
+    start_array[i] = index[0]
+    end_array[i] = index[-1]
+
+poly1d_fn = np.poly1d(np.polyfit(x,start_array,1)) 
+start_fit = np.round(poly1d_fn(x)).astype(int)
+
+poly1d_fn = np.poly1d(np.polyfit(x,end_array,1)) 
+end_fit = np.round(poly1d_fn(x)).astype(int)
+
+
+data_fill = data.copy()
+
+lower_limit = np.min(start_fit)
+upper_limit = np.max(end_fit)
+
+ramp_width = 50
+sino_mean = np.mean(data.array[np.max(start_fit):np.min(end_fit),i])
+
+for i in np.arange(data.shape[1]):
+    start = start_fit[i]+10
+    end = end_fit[i]-10
+
+    data_fill.array[lower_limit:start,i] = np.mean(data_fill.array[start:start+100,i])
+    y_new = np.interp(np.arange(lower_limit-ramp_width,lower_limit), [lower_limit-ramp_width,lower_limit], [sino_mean, data_fill.array[lower_limit,i]])
+    data_fill.array[lower_limit-ramp_width:lower_limit,i] = y_new
+    data_fill.array[0:lower_limit-ramp_width,i] = sino_mean
+
+    data_fill.array[end:upper_limit,i] = np.mean(data_fill.array[end-100:end,i])
+    y_new = np.interp(np.arange(upper_limit-1,upper_limit+ramp_width-1), [upper_limit-1, upper_limit+ramp_width-1], [data_fill.array[upper_limit-1,i], sino_mean])
+    data_fill.array[upper_limit-1:upper_limit+ramp_width-1,i] = y_new
+    data_fill.array[upper_limit+ramp_width-1:,i] = sino_mean
 
 padsize = 3000
-data_slice = Padder.linear_ramp( padsize, 0)(data_slice)
-
-r = RingRemover(8,'db20', 1.5)
-r.set_input(data_slice)
-data_slice = r.get_output()
-
-data_slice.geometry.set_centre_of_rotation(16.5, distance_units='pixels')
+data_pad = Padder.linear_ramp(padsize, 0)(data_fill)
 
 def algo_isotropic_TV(data_slice, alpha, initial=None):
 
@@ -178,54 +155,153 @@ def algo_anisotropic_TV(data_slice, alpha, alpha_dx, sigma=0.5, initial=None):
 
     return myPDHG
 
-# alphas = [0.01, 0.05, 0.1, 0.5, 1, 5]
+def algo_anisotropic_TV_y(data_slice, alpha, alpha_dy, sigma=0.5, initial=None):
 
-# for i in np.arange(len(alphas)):
-#     myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alphas[i], sigma=0.5, initial=None)
-#     myPDHG.run(300,verbose=2)
-#     reco = myPDHG.solution
+    ag = data_slice.geometry
+    ig = ag.get_ImageGeometry()
 
-#     reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+    F = BlockFunction(0.5*L2NormSquared(b=data_slice),
+                          alpha*MixedL21Norm(), 
+                          alpha_dy*L1Norm())
 
-#     writer = NEXUSDataWriter()
-#     writer.set_up(data=reco,
-#             file_name='sigma05_reco_alpha_loop_'+str(i)+'.nxs')
-#     writer.write()
+    K = BlockOperator(ProjectionOperator(ig, ag), 
+                         GradientOperator(ig), 
+                         FiniteDifferenceOperator(ig, direction='horizontal_y'))
 
-#     np.save('sigma05_obj_alpha_loop_'+str(i)+'.npy', myPDHG.objective)
+    G = ZeroFunction()
 
+    normK = K.norm()
+    tau = 1./(sigma*normK**2)
 
-## 
-alpha = 0.05
-alpha_dx = 0.01
+    myPDHG = PDHG(f=F, 
+                g=G, 
+                operator=K, 
+                sigma = sigma, tau = tau,
+                initial = initial,
+                max_iteration=2000, 
+                update_objective_interval = 10,
+                )
+
+    return myPDHG
+
+# #### long iso TV
+# alpha = 0.5
+# sigma = 0.1
+
+# myPDHG = algo_isotropic_TV_implicit(data_pad, alpha=alpha, sigma=sigma, initial=None)
+# myPDHG.run(2000,verbose=2)
+# reco = myPDHG.solution
+
+# reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+# writer = NEXUSDataWriter()
+# writer.set_up(data=reco,
+#         file_name='long_sigma01_reco_alpha05.nxs')
+# writer.write()
+
+# np.save('long_sigma01_obj_alpha05.npy', myPDHG.objective)
+
+# #### long aniso x TV
+# alpha = 0.5
+# alpha_dx = 0.1
+# sigma = 0.1
+
+# myPDHG = algo_anisotropic_TV(data_pad, alpha=alpha, alpha_dx=alpha_dx, sigma=sigma, initial=None)
+# myPDHG.run(2000,verbose=2)
+# reco = myPDHG.solution
+
+# reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+
+# writer = NEXUSDataWriter()
+# writer.set_up(data=reco,
+#         file_name='long_sigma01_reco_alpha05_alphadx01.nxs')
+# writer.write()
+
+# np.save('long_sigma01_obj_alpha05_alphadx01.npy', myPDHG.objective)
+# # 
+
+# #### long aniso y TV
+alpha = 0.5
+alpha_dy = 0.4
 sigma = 0.1
 
-myPDHG = algo_anisotropic_TV(data_slice, alpha=alpha, alpha_dx=alpha_dx, sigma=sigma, initial=None)
-myPDHG.run(1000,verbose=2)
+myPDHG = algo_anisotropic_TV_y(data_pad, alpha=alpha, alpha_dy=alpha_dy, sigma=sigma, initial=None)
+myPDHG.run(2000,verbose=2)
 reco = myPDHG.solution
 
 reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
 
 writer = NEXUSDataWriter()
 writer.set_up(data=reco,
-        file_name='aniso_reco_alpha005_alphadx001_sigma01.nxs')
+        file_name='long_sigma01_reco_alpha05_alphady05.nxs')
 writer.write()
 
-np.save('aniso_obj_alpha005_alphadx001_sigma01.npy', myPDHG.objective)
+np.save('long_sigma01_obj_alpha05_alphady05.npy', myPDHG.objective)
+# 
 
-#### long iso TV
-alpha = 0.1
-sigma = 0.1
 
-myPDHG = algo_isotropic_TV_implicit(data_slice, alpha=alpha, sigma=sigma, initial=None)
-myPDHG.run(1000,verbose=2)
-reco = myPDHG.solution
 
-reco = Slicer(roi={'horizontal_y': (padsize,padsize+2560), 'horizontal_x' : (padsize,padsize+2560)})(reco)
+### filter
+# data_filter = data_pad.copy()
 
-writer = NEXUSDataWriter()
-writer.set_up(data=reco,
-        file_name='long_sigma01_reco_alpha01.nxs')
-writer.write()
+# fbp = FBP(data_filter, ig)
+# fbp.set_filter_inplace(True)
+# fbp.run()
 
-np.save('long_sigma01_obj_alpha01.npy', myPDHG.objective)
+# roi = {'horizontal':(padsize, data_filter.shape[1]-padsize, 1)}
+# processor = Slicer(roi)
+# processor.set_input(data_filter)
+# data_filter = processor.get_output()
+
+# from cil.plugins.tigre import ProjectionOperator
+# reco = FBP(data_pad, ig).run()
+# projection_operator = ProjectionOperator(image_geometry=None, acquisition_geometry=data_filter.geometry,adjoint_weights='FDK')
+# reco_filter = projection_operator.adjoint(data_filter)
+
+# projection_operator = ProjectionOperator(image_geometry=ImageGeometry(5000,5000), acquisition_geometry=data_filter.geometry,adjoint_weights='FDK')
+# reco_backprojected = projection_operator.adjoint(data_filter)
+
+# reco_backprojected_crop = reco_backprojected.copy()
+# mask = (np.arange(reco_backprojected_crop.shape[0])[np.newaxis,:]-2500)**2 + (np.arange(reco_backprojected_crop.shape[0])[:,np.newaxis]-2500)**2 < (2500/2)**2
+# reco_backprojected_crop.array[mask] = 0
+
+# forward_projection = projection_operator.direct(reco_backprojected_crop)
+
+# projection_operator_full = ProjectionOperator(image_geometry=ig, acquisition_geometry=data_fill.geometry, adjoint_weights='FDK')
+# forward_projection_full = projection_operator.direct(reco_backprojected_crop)
+
+# subtracted = data_fill - forward_projection
+
+# ## try aniso PDHG with no padding
+# alpha = 0.05
+# alpha_dx = 0.01
+# sigma = 0.1
+
+# myPDHG = algo_anisotropic_TV(subtracted, alpha=alpha, alpha_dx=alpha_dx, sigma=sigma, initial=None)
+# myPDHG.run(1000,verbose=2)
+# reco = myPDHG.solution
+
+
+# writer = NEXUSDataWriter()
+# writer.set_up(data=reco,
+#         file_name='filter_nopad_aniso_reco_alpha005_alphadx001_sigma01.nxs')
+# writer.write()
+
+# np.save('filter_nopad_aniso_obj_alpha005_alphadx001_sigma01.npy', myPDHG.objective)
+
+
+
+# ## try aniso PDHG with padding
+# padsize = 1000
+# subtracted_pad = Padder.linear_ramp(padsize, 0)(subtracted)
+# myPDHG = algo_anisotropic_TV(subtracted_pad, alpha=alpha, alpha_dx=alpha_dx, sigma=sigma, initial=None)
+# myPDHG.run(1000,verbose=2)
+# reco = myPDHG.solution
+
+
+# writer = NEXUSDataWriter()
+# writer.set_up(data=reco,
+#         file_name='filter_pad_aniso_reco_alpha005_alphadx001_sigma01.nxs')
+# writer.write()
+
+# np.save('filter_pad_aniso_obj_alpha005_alphadx001_sigma01.npy', myPDHG.objective)
