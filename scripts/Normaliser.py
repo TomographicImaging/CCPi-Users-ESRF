@@ -192,10 +192,8 @@ class Normaliser_flux(Processor):
             out = data.copy()
 
         flux_size = (numpy.shape(self.flux))
-
+        
         proj_axis = data.get_dimension_axis('angle')
-
-
         slice_proj = [slice(None)]*len(data.shape)
         slice_proj[proj_axis] = 0
         
