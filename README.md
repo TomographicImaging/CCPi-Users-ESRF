@@ -2,7 +2,7 @@
 
 `cil_pipeline.ipynb` provides an example of reading in, preprocessing and reconstructing an ESRF dataset.
 
-`scripts` contains `HDF5_ParallelDataReader`, `WeightDuplicateAngles` and `Normaliser`. These are classes provided as extensions to CIL that are used by the `cil_pipeline.ipynb`
+`scripts` contains `Custom_DataReaders`, `HDF5_ParallelDataReader`, `WeightDuplicateAngles` and `FluxNormaliser`. These are classes provided as extensions to CIL that are used by the `cil_pipeline.ipynb`
 
 You will need to run the code inside a conda environment created with:
 
