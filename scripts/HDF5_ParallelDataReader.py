@@ -1,4 +1,4 @@
-from cil.framework import AcquisitionGeometry
+from cil.framework import AcquisitionData, AcquisitionGeometry
 from cil.io.utilities import HDF5_utilities
 from scripts.ReaderABC import ReaderABC
 import numpy as np
@@ -58,6 +58,8 @@ class HDF5_ParallelDataReader(ReaderABC):
         self._normalise = False
         self.reset()
         self._dataset_path = dataset_path
+        self.flatfield_path = None
+        self.darkfield_path = None
 
         self._metadata = {
             'pixel_size_x' : 1,
@@ -82,14 +84,18 @@ class HDF5_ParallelDataReader(ReaderABC):
     def configure_normalisation_data(self, filename=None,darkfield_path=None, 
                                      flatfield_path=None):
         if filename is None:
-            filename = self.file_name
+            self.norm_filename = self.file_name
+        else:
+            self.norm_filename = filename
         
         if flatfield_path is not None:
-            self.flatfield = HDF5_utilities.read(filename, flatfield_path)
+            self.flatfield_path = flatfield_path
             
-
         if darkfield_path is not None:
-            self.darkfield = HDF5_utilities.read(filename, darkfield_path)
+            self.darkfield_path = darkfield_path
+
+            # darkfield = HDF5_utilities.read(filename, darkfield_path)
+
 
     # def configure()
     
@@ -341,5 +347,24 @@ class HDF5_ParallelDataReader(ReaderABC):
 
         # self._data_reader.dtype = dtype
         # self._data_reader.set_roi(roi)
+        if self.flatfield_path is not None:
+            flatfield = HDF5_utilities.read(self.norm_filename, self.flatfield_path)
+            try:
+                num_repeats = len(flatfield)
+            except:
+                num_repeats = 1
+            geom = self._acquisition_geometry.copy()
+            geom.set_angles(np.ones(num_repeats))
+            self.flatfield = AcquisitionData(flatfield, geometry=geom)
+
+        if self.darkfield_path is not None:
+            darkfield = HDF5_utilities.read(self.norm_filename, self.darkfield_path)
+            try:
+                num_repeats = len(darkfield)
+            except:
+                num_repeats = 1
+            geom = self._acquisition_geometry.copy()
+            geom.set_angles(np.ones(num_repeats))
+            self.darkfield = AcquisitionData(darkfield, geometry=geom)
 
         return ad
